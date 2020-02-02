@@ -6,7 +6,8 @@
 #include <opencv2/imgcodecs.hpp>
 #include <string>
 #include <tuple>
-
+#include <fstream>
+#include <stdio.h>
 using namespace std;
 using namespace cv;
 namespace fs = std::experimental::filesystem; 
@@ -34,20 +35,33 @@ int main(int argc, char * argv[]){
 		Mat image;
 		string filepath;
 		double blue=0, green=0, red=0;
+		ofstream txtout;
+		txtout.open("BGR_mean.txt",ios::out|ios::trunc);
+		//txtout <<"FileName"<<" "<<"Blue" << " " << "Green" << " " << "Red" <<endl;
 		for (const auto& entry : fs::directory_iterator(path)) {
 			const auto filenameStr = entry.path().filename().string();
 			string ext = entry.path().extension();
 			if (ext == ".JPG") {
 				filepath = argv[1] + filenameStr;
 				image = imread(filepath, IMREAD_COLOR);// read image file
-				meanIntensity(image, &blue, &green, &red);
-				cout << blue <<" "<< green <<" "<< red << endl;
 				if(image.empty())                      // Check for invalid input
 					{
 						cout <<  "Could not open or find the image" << std::endl ;
 						return -1;
-					}				
+					}			
+				meanIntensity(image, &blue, &green, &red);
+				txtout << filepath <<"\t" << blue << "\t" << green << "\t" << red << endl;
 			}
+		}
+		txtout.close();
+
+		// Read textfile
+		FILE * ptr = fopen("BGR_mean.txt","r");
+		char buf[50];
+		double bl, gr, re;
+		while (fgetc(ptr) != EOF) {
+			fscanf(ptr, "%s %lf %lf %lf \n", buf, &bl, &gr, &re);
+			cout << buf<<"\t"<<bl <<"\t"<< gr <<"\t"<< re <<endl;
 		}
 		return 0;
 }
