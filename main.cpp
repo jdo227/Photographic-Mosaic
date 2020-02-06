@@ -11,7 +11,7 @@
 #include <vector>
 #include <cstdio>
 #include <math.h>
-
+#include <typeinfo>
 using namespace std;
 using namespace cv;
 namespace fs = std::experimental::filesystem; 
@@ -20,53 +20,88 @@ void meanIntensity(Mat M, double& blue, double& green, double& red);
 void linspace(double start, double end, int N, double vec[]);
 int minDist(Mat bgr_list, double blue, double green, double red, vector<string> path_list);
 void makeList(bool yn, string filename, string path);
-void makeTestData(bool yn, char im_dir[]);
+void makeTestData(bool yn, char im_dir[], int rows, int cols, int ncolors);
 Mat readList(char bgrfile[], vector<string>& path_list);
-
-// examples: ./Mosaic bar_set/ main.jpg 50
-int main(int argc, char * argv[]){
+void resize(const Mat sub_img, Mat &img_crop, int rows, int cols) {
+	img_crop = Mat::zeros(rows, cols, CV_8UC3);
+	int scale = sub_img.rows / img_crop.rows;
+	for (int i = 0; i < img_crop.rows; i++) {
+		for (int j = 0; j < img_crop.cols; j++) {
+			img_crop.at<Vec3b>(i, j) = sub_img.at<Vec3b>(i * scale, j * scale);
+		}
+	}
+}
+// examples: make && ./Mosaic lib_img_crop/ main.jpg 10 lib_img/ lib_img_crop/  
+int main(int argc, char* argv[]) {
 
 	// Create mean BGR value list
 	string path = argv[1];
-	makeList(0, "BGR_mean.txt", path);
+	makeList(1, "BGR_mean.txt", path);
 
 	//Create Test Data Sets
 	char im_dir[] = "bgr_set";
-	makeTestData(0, im_dir);
+	int rows = 80;
+	int cols = 100;
+	int ncolors = 20;
+	makeTestData(0, im_dir, rows, cols, ncolors);
 
 	// Read RGB data set value list
 	char bgrfile[] = "BGR_mean.txt";
 	vector<string> path_list;
-	Mat bgr_list = readList(bgrfile,path_list);
+	Mat bgr_list = readList(bgrfile, path_list);
+
+	// Prepare the image data sets
+	vector<int> compression_params;
+	compression_params.push_back(IMWRITE_PNG_COMPRESSION);
+	compression_params.push_back(9);
+	string imgsets = argv[4];
+	char* imgcrops = argv[5];
+	string filepath;
+	string filename;
+	double scale;
+	Mat image, img_crop;
+	namedWindow("Display", WINDOW_AUTOSIZE);
+
+	//char buffer[50];
+	for (const auto& entry : fs::directory_iterator(imgsets)) {
+		const auto filenameStr = entry.path().filename().string();
+		filepath = imgsets + filenameStr;
+		image = imread(filepath, IMREAD_COLOR);// read image file
+		if (image.rows > image.cols) {
+			transpose(image, image);
+		}
+		scale = min(floor(image.rows / rows), floor(image.cols / cols));
+		Mat sub_img = image.colRange(0, scale * cols).rowRange(0, scale * rows);
+		resize(sub_img, img_crop, rows, cols);
+		filename = imgcrops + filenameStr;
+		imwrite(filename, img_crop, compression_params);
+	}
 
 	//Read Original Image
-	string filepath = argv[2];
+	string target = argv[2];
 	double blue = 0, green = 0, red = 0;
-	Mat image = imread(filepath, IMREAD_COLOR);// read image file
+	image = imread(target, IMREAD_COLOR);// read image file
 	int py_r, px_c,N_r,N_c;
 	py_r = px_c = atoi(argv[3]);
 	N_r = floor(image.rows / py_r);
 	N_c = floor(image.cols / px_c);
-	int res = 64;// lateral size of replacement sub_image
-	Mat canvas(N_r*res, N_c*res, CV_8UC3);
+	Mat canvas= Mat::zeros(N_r*rows, N_c*cols, CV_8UC3);
+
 	//Process each block
 	int idx = 0;
 	for (int i = 0; i < N_r; i++) {
 		for (int j = 0; j < N_c; j++) {
-			int Tp_x = j * res;			
-			int Tp_y = i * res;
+			int Tp_x = j * cols;			
+			int Tp_y = i * rows;
 			Mat sub_image = image(Rect(j*px_c, i*py_r, px_c, py_r));
 			meanIntensity(sub_image, blue, green, red);
 			idx = minDist(bgr_list, blue, green, red, path_list);
 			sub_image = imread(path_list[idx], IMREAD_COLOR);
-			Mat aux = canvas.colRange(Tp_x, Tp_x + res).rowRange(Tp_y, Tp_y + res);
+			Mat aux = canvas.colRange(Tp_x, Tp_x + cols).rowRange(Tp_y, Tp_y + rows);
 			sub_image.copyTo(aux);
 		}
 	}
 	// Write Mosaic
-	vector<int> compression_params;
-	compression_params.push_back(IMWRITE_PNG_COMPRESSION);
-	compression_params.push_back(9);
 	imwrite("mosaic.png", canvas, compression_params);
 	return 0;
 }
@@ -97,11 +132,10 @@ Mat readList(char bgrfile[], vector<string>& path_list) {
 	fclose(ptr);
 	return bgr_list;
 }
-void makeTestData(bool yn, char im_dir[]) {
+void makeTestData(bool yn, char im_dir[],int rows, int cols, int ncolors) {
 	if (yn) {
-		int a = 64;// lateral size
 		int nb, ng, nr; //number of color in a channel
-		nb = ng = nr = 20;
+		nb = ng = nr = ncolors;
 		double v[nb];
 		linspace(0, 255.0, nb, v);
 		Mat im;
@@ -109,13 +143,12 @@ void makeTestData(bool yn, char im_dir[]) {
 		compression_params.push_back(IMWRITE_PNG_COMPRESSION);
 		compression_params.push_back(9);
 		char buffer[50];
-		//char im_dir[] = *foldername;
 		for (int i = 0; i < nb; i++) {
-			Mat ch_B = Mat::ones(a, a, CV_8U) * v[i];
+			Mat ch_B = Mat::ones(rows, cols, CV_8U) * v[i];
 			for (int j = 0; j < ng; j++) {
-				Mat ch_G = Mat::ones(a, a, CV_8U) * v[j];
+				Mat ch_G = Mat::ones(rows, cols, CV_8U) * v[j];
 				for (int k = 0; k < nr; k++) {
-					Mat ch_R = Mat::ones(a, a, CV_8U) * v[k];
+					Mat ch_R = Mat::ones(rows, cols, CV_8U) * v[k];
 					vector<Mat> channels{ ch_B,ch_G,ch_R };
 					merge(channels, im);
 					sprintf(buffer, "%s/img_%d_%d_%d.png", im_dir, i, j, k);
@@ -134,13 +167,10 @@ void makeList(bool yn,string filename,string path) {
 		txtout.open(filename, ios::out | ios::trunc);
 		for (const auto& entry : fs::directory_iterator(path)) {
 			const auto filenameStr = entry.path().filename().string();
-			string ext = entry.path().extension();
-			if (ext == ".png") {
-				filepath = path + filenameStr;
-				image = imread(filepath, IMREAD_COLOR);// read image file
-				meanIntensity(image, blue, green, red);
-				txtout << filepath << "\t" << blue << "\t" << green << "\t" << red << endl;
-			}
+			filepath = path + filenameStr;
+			image = imread(filepath, IMREAD_COLOR);// read image file
+			meanIntensity(image, blue, green, red);
+			txtout << filepath << "\t" << blue << "\t" << green << "\t" << red << endl;
 		}
 		txtout.close();
 	}
