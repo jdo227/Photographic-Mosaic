@@ -40,10 +40,8 @@ int main(int argc, char* argv[]) {
 
 	//Create Test Data Sets
 	char im_dir[] = "bgr_set";
-	int rows = 80;
-	int cols = 100;
-	int ncolors = 20;
-	makeTestData(0, im_dir, rows, cols, ncolors);
+	int rows = 40;
+	int cols = 60;
 
 	// Read RGB data set value list
 	char bgrfile[] = "BGR_mean.txt";
@@ -83,8 +81,8 @@ int main(int argc, char* argv[]) {
 	image = imread(target, IMREAD_COLOR);// read image file
 	int py_r, px_c,N_r,N_c;
 	py_r = px_c = atoi(argv[3]);
-	N_r = floor(image.rows / py_r);
-	N_c = floor(image.cols / px_c);
+	N_r = floor(image.rows / py_r)-1;
+	N_c = floor(image.cols / px_c)-1;
 	Mat canvas= Mat::zeros(N_r*rows, N_c*cols, CV_8UC3);
 
 	//Process each block
