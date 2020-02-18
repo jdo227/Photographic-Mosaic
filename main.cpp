@@ -12,6 +12,13 @@
 #include <cstdio>
 #include <math.h>
 #include <typeinfo>
+#include <iostream>
+#include <vector>
+#include <stdio.h>      
+#include <opencv2/opencv.hpp>    
+#include "opencv2/imgproc.hpp"
+#include "opencv2/core/core_c.h"
+
 using namespace std;
 using namespace cv;
 namespace fs = std::experimental::filesystem; 
@@ -31,22 +38,12 @@ void resize(const Mat sub_img, Mat &img_crop, int rows, int cols) {
 		}
 	}
 }
+void similarity(Mat imgA, Mat imgB, float& emd);
+
 // examples: make && ./Mosaic lib_img_crop/ main.jpg 10 lib_img/ lib_img_crop/  
 int main(int argc, char* argv[]) {
-
-	// Create mean BGR value list
-	string path = argv[1];
-	makeList(1, "BGR_mean.txt", path);
-
-	//Create Test Data Sets
-	char im_dir[] = "bgr_set";
-	int rows = 40;
-	int cols = 60;
-
-	// Read RGB data set value list
-	char bgrfile[] = "BGR_mean.txt";
-	vector<string> path_list;
-	Mat bgr_list = readList(bgrfile, path_list);
+	int rows = 50;//pixels in row of grid
+	int cols = 50;//pixels in column of grid
 
 	// Prepare the image data sets
 	vector<int> compression_params;
@@ -58,9 +55,13 @@ int main(int argc, char* argv[]) {
 	string filename;
 	double scale;
 	Mat image, img_crop;
-	namedWindow("Display", WINDOW_AUTOSIZE);
 
-	//char buffer[50];
+	//create resized image pool
+	int count = 0;
+	vector<string> img_crop_list;
+	char buf[100];
+	Mat sub_img;
+	
 	for (const auto& entry : fs::directory_iterator(imgsets)) {
 		const auto filenameStr = entry.path().filename().string();
 		filepath = imgsets + filenameStr;
@@ -69,12 +70,15 @@ int main(int argc, char* argv[]) {
 			transpose(image, image);
 		}
 		scale = min(floor(image.rows / rows), floor(image.cols / cols));
-		Mat sub_img = image.colRange(0, scale * cols).rowRange(0, scale * rows);
+		sub_img = image.colRange(0, scale * cols).rowRange(0, scale * rows);
 		resize(sub_img, img_crop, rows, cols);
 		filename = imgcrops + filenameStr;
 		imwrite(filename, img_crop, compression_params);
+		img_crop_list.push_back(filename);
+		printf("Cropping: %d\n", count);
+		count++;
 	}
-
+	printf("Cropping finished.\n");
 	//Read Original Image
 	string target = argv[2];
 	double blue = 0, green = 0, red = 0;
@@ -86,25 +90,91 @@ int main(int argc, char* argv[]) {
 	Mat canvas= Mat::zeros(N_r*rows, N_c*cols, CV_8UC3);
 
 	//Process each block
-	int idx = 0;
+	int idx = 0, Tp_x, Tp_y;
+	float emd, min_emd = 1;//emd 0 is best matching
+	Mat img_crops, sub_image, aux;
 	for (int i = 0; i < N_r; i++) {
 		for (int j = 0; j < N_c; j++) {
-			int Tp_x = j * cols;			
-			int Tp_y = i * rows;
-			Mat sub_image = image(Rect(j*px_c, i*py_r, px_c, py_r));
-			meanIntensity(sub_image, blue, green, red);
-			idx = minDist(bgr_list, blue, green, red, path_list);
-			sub_image = imread(path_list[idx], IMREAD_COLOR);
-			Mat aux = canvas.colRange(Tp_x, Tp_x + cols).rowRange(Tp_y, Tp_y + rows);
-			sub_image.copyTo(aux);
+			min_emd = 1;
+			Tp_x = j * cols;			
+			Tp_y = i * rows;
+			sub_image = image(Rect(j*px_c, i*py_r, px_c, py_r));
+			for (int k = 0; k < count; k++) {
+				filepath = img_crop_list[k];
+				img_crops = imread(filepath, IMREAD_COLOR);// read image file
+				similarity(sub_image, img_crops, emd);
+				if (emd < min_emd) {
+					min_emd = emd;
+					idx = k;
+				}
+			}
+			img_crops = imread(img_crop_list[idx], IMREAD_COLOR);
+			aux = canvas.colRange(Tp_x, Tp_x + cols).rowRange(Tp_y, Tp_y + rows);
+			img_crops.copyTo(aux);
+			printf("Row:%d/%d, Col:%d/%d\n", i, N_r - 1, j, N_c - 1);
 		}
 	}
 	// Write Mosaic
-	imwrite("mosaic.png", canvas, compression_params);
+	imwrite("Mosaic.png", canvas, compression_params);
 	return 0;
 }
 
 // Functions
+void similarity(Mat imgA, Mat imgB, float& emd) {
+	//variables preparing      
+	int hbins = 30, sbins = 32;
+	int channels[] = { 0,  1 };
+	int histSize[] = { hbins, sbins };
+	float hranges[] = { 0, 180 };
+	float sranges[] = { 0, 255 };
+	const float* ranges[] = { hranges, sranges };
+
+	Mat patch_HSV;
+	MatND HistA, HistB;
+
+	//cal histogram & normalization   
+	cvtColor(imgA, patch_HSV, COLOR_BGR2HSV);
+	calcHist(&patch_HSV, 1, channels, Mat(), // do not use mask   
+		HistA, 2, histSize, ranges,
+		true, // the histogram is uniform   
+		false);
+	normalize(HistA, HistA, 0, 1, CV_MINMAX);
+
+	cvtColor(imgB, patch_HSV, COLOR_BGR2HSV);
+	calcHist(&patch_HSV, 1, channels, Mat(),// do not use mask   
+		HistB, 2, histSize, ranges,
+		true, // the histogram is uniform   
+		false);
+	normalize(HistB, HistB, 0, 1, CV_MINMAX);
+
+	//compare histogram      
+	int numrows = hbins * sbins;
+
+	//make signature
+	Mat sig1(numrows, 3, CV_32FC1);
+	Mat sig2(numrows, 3, CV_32FC1);
+
+	//fill value into signature
+	float binval;
+	for (int h = 0; h < hbins; h++)
+	{
+		for (int s = 0; s < sbins; s++)
+		{
+			binval = HistA.at< float>(h, s);
+			sig1.at< float>(h * sbins + s, 0) = binval;
+			sig1.at< float>(h * sbins + s, 1) = h;
+			sig1.at< float>(h * sbins + s, 2) = s;
+
+			binval = HistB.at< float>(h, s);
+			sig2.at< float>(h * sbins + s, 0) = binval;
+			sig2.at< float>(h * sbins + s, 1) = h;
+			sig2.at< float>(h * sbins + s, 2) = s;
+		}
+	}
+
+	//compare similarity of 2images using emd.
+	emd = cv::EMD(sig1, sig2, DIST_L2); //emd 0 is best matching. 
+}
 Mat readList(char bgrfile[], vector<string>& path_list) {
 	FILE* ptr = fopen(bgrfile, "r");
 	char buf[100];
