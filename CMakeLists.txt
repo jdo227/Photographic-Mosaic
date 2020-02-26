@@ -13,7 +13,7 @@ add_executable(Mosaic main.cpp)
 cmake_minimum_required(VERSION 3.10)
 find_package(OpenCV REQUIRED)
 
-
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -pthread")
 
 #Add lib for fs
 TARGET_LINK_LIBRARIES(Mosaic stdc++fs)

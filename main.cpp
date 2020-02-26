@@ -4,6 +4,9 @@
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/opencv.hpp>    
+#include "opencv2/imgproc.hpp"
+#include "opencv2/core/core_c.h"
 #include <string>
 #include <tuple>
 #include <fstream>
@@ -15,13 +18,71 @@
 #include <iostream>
 #include <vector>
 #include <stdio.h>      
-#include <opencv2/opencv.hpp>    
-#include "opencv2/imgproc.hpp"
-#include "opencv2/core/core_c.h"
-
+#include <bits/stdc++.h> 
+#include <stdlib.h>
+#include <pthread.h>
+#include <mutex>
 using namespace std;
 using namespace cv;
 namespace fs = std::experimental::filesystem; 
+std::mutex mtx;
+#define MAX_THREAD 16
+struct thread_args {
+	int count, px_c, rows, cols;
+	Mat* image;
+	//Mat* canvas;
+	vector<string>* img_crop_list;
+};
+int step_i = 0;
+Mat canvas;
+void similarity(Mat imgA, Mat imgB, float& emd);
+void* multi(void* arg) {
+	struct thread_args* args = (struct thread_args*)arg;
+	int count = args->count;
+	int px_c = args->px_c;
+	int rows = args->rows;
+	int cols = args->cols;
+	Mat image = *(args->image);
+	//Mat canvas = *(args->canvas);
+	vector<string> img_crop_list = *(args->img_crop_list);
+	int idx = 0, Tp_x, Tp_y;
+	float emd, min_emd = 1;//emd 0 is best matching
+	Mat img_crops, sub_image, aux;
+	int core = step_i++;
+	int py_r = px_c;
+	string filepath;
+	int N_r = floor(image.rows / py_r) - 1;
+	int N_c = floor(image.cols / px_c) - 1;
+	int per_THREAD = N_r * N_c / MAX_THREAD;
+	// each thread computes 1/MAX_THREAD of the matrix
+	for (int c = core * per_THREAD; c < (core + 1) * per_THREAD; c++) {
+		if (c < N_r * N_c) {
+			int i = (c - c % N_c) / N_c;
+			int j = c % N_c;
+			printf("row:%d, col:%d\n", i, j);
+			min_emd = 1;
+			Tp_x = j * cols;
+			Tp_y = i * rows;
+			sub_image = image(Rect(j * px_c, i * py_r, px_c, py_r));
+			for (int k = 0; k < count; k++) {
+				filepath = img_crop_list[k];
+				img_crops = imread(filepath, IMREAD_COLOR);// read image file
+				similarity(sub_image, img_crops, emd);
+				if (emd < min_emd) {
+					min_emd = emd;
+					idx = k;
+				}
+			}
+			img_crops = imread(img_crop_list[idx], IMREAD_COLOR);
+			mtx.lock();
+			aux = canvas.colRange(Tp_x, Tp_x + cols).rowRange(Tp_y, Tp_y + rows);
+			img_crops.copyTo(aux);
+			imshow("this image", canvas);
+			waitKey(10);
+			mtx.unlock();
+		}
+	}
+}
 
 void meanIntensity(Mat M, double& blue, double& green, double& red);
 void linspace(double start, double end, int N, double vec[]);
@@ -38,84 +99,83 @@ void resize(const Mat sub_img, Mat &img_crop, int rows, int cols) {
 		}
 	}
 }
-void similarity(Mat imgA, Mat imgB, float& emd);
 
-// examples: make && ./Mosaic lib_img_crop/ main.jpg 10 lib_img/ lib_img_crop/  
+
+// examples: make && ./Mosaic main.jpg 10 lib_img/ lib_img_crop/ 
+// ./Mosaic main_image pix_c source_lib target_lib
 int main(int argc, char* argv[]) {
-	int rows = 50;//pixels in row of grid
-	int cols = 50;//pixels in column of grid
+	int rows = 32;//pixels in row of subimage
+	int cols = 32;//pixels in column of subimage
 
 	// Prepare the image data sets
 	vector<int> compression_params;
 	compression_params.push_back(IMWRITE_PNG_COMPRESSION);
 	compression_params.push_back(9);
-	string imgsets = argv[4];
-	char* imgcrops = argv[5];
+	string imgsets = argv[3];
+	char* imgcrops = argv[4];
 	string filepath;
 	string filename;
 	double scale;
 	Mat image, img_crop;
-
 	//create resized image pool
 	int count = 0;
 	vector<string> img_crop_list;
 	char buf[100];
 	Mat sub_img;
-	
+	bool rescale = true;
 	for (const auto& entry : fs::directory_iterator(imgsets)) {
 		const auto filenameStr = entry.path().filename().string();
 		filepath = imgsets + filenameStr;
 		image = imread(filepath, IMREAD_COLOR);// read image file
 		if (image.rows > image.cols) {
-			transpose(image, image);
+				transpose(image, image);
 		}
-		scale = min(floor(image.rows / rows), floor(image.cols / cols));
-		sub_img = image.colRange(0, scale * cols).rowRange(0, scale * rows);
-		resize(sub_img, img_crop, rows, cols);
 		filename = imgcrops + filenameStr;
-		imwrite(filename, img_crop, compression_params);
 		img_crop_list.push_back(filename);
-		printf("Cropping: %d\n", count);
+		if (rescale) {
+			scale = min(floor(image.rows / rows), floor(image.cols / cols));
+			sub_img = image.colRange(0, scale * cols).rowRange(0, scale * rows);
+			resize(sub_img, img_crop, rows, cols);
+			imwrite(filename, img_crop, compression_params);
+		}
+		if (count % 100 == 0) {
+			printf("Cropping: %d\n", count);
+		}
 		count++;
 	}
-	printf("Cropping finished.\n");
 	//Read Original Image
-	string target = argv[2];
+	string target = argv[1];
 	double blue = 0, green = 0, red = 0;
 	image = imread(target, IMREAD_COLOR);// read image file
 	int py_r, px_c,N_r,N_c;
-	py_r = px_c = atoi(argv[3]);
+	py_r = px_c = atoi(argv[2]);
 	N_r = floor(image.rows / py_r)-1;
 	N_c = floor(image.cols / px_c)-1;
-	Mat canvas= Mat::zeros(N_r*rows, N_c*cols, CV_8UC3);
+	canvas = Mat::zeros(N_r * rows, N_c * cols, CV_8UC3);
+	// declaring threads
+	pthread_t threads[MAX_THREAD];
+	// prepare argument
+	struct thread_args* args = (struct thread_args*)malloc(sizeof(struct thread_args));
+	args->count = count;
+	args->px_c = px_c;
+	args->rows = rows;
+	args->cols = cols;
+	args->img_crop_list = &img_crop_list;
+	args->image = &image;
+	//args->canvas = &canvas;
+	// creating threads, each evaluating its own part
 
-	//Process each block
-	int idx = 0, Tp_x, Tp_y;
-	float emd, min_emd = 1;//emd 0 is best matching
-	Mat img_crops, sub_image, aux;
-	for (int i = 0; i < N_r; i++) {
-		for (int j = 0; j < N_c; j++) {
-			min_emd = 1;
-			Tp_x = j * cols;			
-			Tp_y = i * rows;
-			sub_image = image(Rect(j*px_c, i*py_r, px_c, py_r));
-			for (int k = 0; k < count; k++) {
-				filepath = img_crop_list[k];
-				img_crops = imread(filepath, IMREAD_COLOR);// read image file
-				similarity(sub_image, img_crops, emd);
-				if (emd < min_emd) {
-					min_emd = emd;
-					idx = k;
-				}
-			}
-			img_crops = imread(img_crop_list[idx], IMREAD_COLOR);
-			aux = canvas.colRange(Tp_x, Tp_x + cols).rowRange(Tp_y, Tp_y + rows);
-			img_crops.copyTo(aux);
-			printf("Row:%d/%d, Col:%d/%d\n", i, N_r - 1, j, N_c - 1);
-		}
+	for (int i = 0; i < MAX_THREAD; i++) {
+		pthread_create(&threads[i], NULL, multi, (void*)args);
 	}
+	// joining and waiting for all threads to complete
+	for (int i = 0; i < MAX_THREAD; i++) {
+		pthread_join(threads[i], NULL);
+	}
+
 	// Write Mosaic
 	imwrite("Mosaic.png", canvas, compression_params);
+
 	return 0;
 }
 
