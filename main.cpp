@@ -34,6 +34,7 @@ struct thread_args {
 	vector<string>* img_crop_list;
 };
 int step_i = 0;
+int row = 800, col = 1500; //screen resolution
 Mat canvas;
 void similarity(Mat imgA, Mat imgB, float& emd);
 void* multi(void* arg) {
@@ -53,13 +54,17 @@ void* multi(void* arg) {
 	string filepath;
 	int N_r = floor(image.rows / py_r) - 1;
 	int N_c = floor(image.cols / px_c) - 1;
-	int per_THREAD = N_r * N_c / MAX_THREAD;
+	float width_factor = (canvas.cols - canvas.cols % col) / col + 1;
+	float height_factor = (canvas.rows - canvas.rows % row) / row + 1;
+	float factor;
+	(width_factor > height_factor) ? (factor = width_factor) : (factor = height_factor);
+	int width = canvas.cols / factor;
+	int height = canvas.rows / factor;
 	// each thread computes 1/MAX_THREAD of the matrix
-	for (int c = core * per_THREAD; c < (core + 1) * per_THREAD; c++) {
+	for (int c = core * N_r * N_c / MAX_THREAD; c < (core + 1) * N_r * N_c / MAX_THREAD; c++) {
 		if (c < N_r * N_c) {
 			int i = (c - c % N_c) / N_c;
 			int j = c % N_c;
-			printf("row:%d, col:%d\n", i, j);
 			min_emd = 1;
 			Tp_x = j * cols;
 			Tp_y = i * rows;
@@ -77,9 +82,11 @@ void* multi(void* arg) {
 			mtx.lock();
 			aux = canvas.colRange(Tp_x, Tp_x + cols).rowRange(Tp_y, Tp_y + rows);
 			img_crops.copyTo(aux);
-			imshow("this image", canvas);
-			waitKey(10);
 			mtx.unlock();
+			namedWindow("Display frame", WINDOW_NORMAL);
+			resizeWindow("Display frame", width, height);
+			imshow("Display frame", canvas);
+			waitKey(1);
 		}
 	}
 }
@@ -101,11 +108,10 @@ void resize(const Mat sub_img, Mat &img_crop, int rows, int cols) {
 }
 
 
-// examples: make && ./Mosaic main.jpg 10 lib_img/ lib_img_crop/ 
-// ./Mosaic main_image pix_c source_lib target_lib
+// examples: make && ./Mosaic main_image pix_c source_lib target_lib
 int main(int argc, char* argv[]) {
-	int rows = 32;//pixels in row of subimage
-	int cols = 32;//pixels in column of subimage
+	int rows = 64;//pixels in row of subimage
+	int cols = 64;//pixels in column of subimage
 
 	// Prepare the image data sets
 	vector<int> compression_params;
@@ -175,7 +181,16 @@ int main(int argc, char* argv[]) {
 
 	// Write Mosaic
 	imwrite("Mosaic.png", canvas, compression_params);
-
+	float width_factor = (canvas.cols - canvas.cols % col) / col + 1;
+	float height_factor = (canvas.rows - canvas.rows % row) / row + 1;
+	float factor;
+	(width_factor > height_factor) ? factor = width_factor : factor = height_factor;
+	int width = canvas.cols / factor;
+	int height = canvas.rows / factor;
+	namedWindow("Display frame", WINDOW_NORMAL);
+	resizeWindow("Display frame", width, height);
+	imshow("Display frame", canvas);
+	waitKey(0);
 	return 0;
 }
 
