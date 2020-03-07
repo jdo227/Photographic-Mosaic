@@ -1,42 +1,32 @@
 ﻿// Project: Photographic Mosaic
-#include <iostream>
-#include <experimental/filesystem>
-#include <opencv2/core.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/opencv.hpp>    
-#include "opencv2/imgproc.hpp"
-#include "opencv2/core/core_c.h"
-#include <string>
-#include <tuple>
-#include <fstream>
-#include <stdio.h>
-#include <vector>
-#include <cstdio>
-#include <math.h>
-#include <typeinfo>
-#include <iostream>
-#include <vector>
-#include <stdio.h>      
-#include <bits/stdc++.h> 
-#include <stdlib.h>
-#include <pthread.h>
-#include <mutex>
-using namespace std;
-using namespace cv;
-namespace fs = std::experimental::filesystem; 
+#include "main.h"
+
 std::mutex mtx;
 #define MAX_THREAD 16
 struct thread_args {
 	int count, px_c, rows, cols;
 	Mat* image;
-	//Mat* canvas;
 	vector<string>* img_crop_list;
 };
 int step_i = 0;
 int row = 800, col = 1500; //screen resolution
 Mat canvas;
 void similarity(Mat imgA, Mat imgB, float& emd);
+
+void pixwise(Mat imgA, Mat imgB, float& emd){
+	emd = 0;
+	for(int i = 0;i<imgA.rows;i++){
+		for(int j =0;j<imgA.cols;j++){
+			Vec3b vA = imgA.at<Vec3b>(i,j);
+			Vec3b vB = imgB.at<Vec3b>(i,j);
+			for(int k=0;k<imgA.dims;k++){
+				float dv = (vA.val[k]-vB.val[k])/255.0;// 255.0 to make it float
+				emd = emd + pow(dv,2);
+			}
+		}
+	}
+	return;
+};
 void* multi(void* arg) {
 	struct thread_args* args = (struct thread_args*)arg;
 	int count = args->count;
@@ -47,7 +37,7 @@ void* multi(void* arg) {
 	//Mat canvas = *(args->canvas);
 	vector<string> img_crop_list = *(args->img_crop_list);
 	int idx = 0, Tp_x, Tp_y;
-	float emd, min_emd = 1;//emd 0 is best matching
+	float emd, min_emd;//emd 0 is best matching
 	Mat img_crops, sub_image, aux;
 	int core = step_i++;
 	int py_r = px_c;
@@ -61,32 +51,35 @@ void* multi(void* arg) {
 	int width = canvas.cols / factor;
 	int height = canvas.rows / factor;
 	// each thread computes 1/MAX_THREAD of the matrix
-	for (int c = core * N_r * N_c / MAX_THREAD; c < (core + 1) * N_r * N_c / MAX_THREAD; c++) {
+	for (int c = core * N_c*N_r/(MAX_THREAD-1); c < (core + 1) * N_c*N_r/(MAX_THREAD-1); c++) {
 		if (c < N_r * N_c) {
 			int i = (c - c % N_c) / N_c;
 			int j = c % N_c;
-			min_emd = 1;
+			min_emd = 1<<20;
 			Tp_x = j * cols;
 			Tp_y = i * rows;
 			sub_image = image(Rect(j * px_c, i * py_r, px_c, py_r));
 			for (int k = 0; k < count; k++) {
 				filepath = img_crop_list[k];
 				img_crops = imread(filepath, IMREAD_COLOR);// read image file
-				similarity(sub_image, img_crops, emd);
+				//similarity(sub_image, img_crops, emd);
+				pixwise(sub_image, img_crops, emd);
 				if (emd < min_emd) {
 					min_emd = emd;
 					idx = k;
 				}
 			}
+
 			img_crops = imread(img_crop_list[idx], IMREAD_COLOR);
 			mtx.lock();
 			aux = canvas.colRange(Tp_x, Tp_x + cols).rowRange(Tp_y, Tp_y + rows);
 			img_crops.copyTo(aux);
-			mtx.unlock();
 			namedWindow("Display frame", WINDOW_NORMAL);
 			resizeWindow("Display frame", width, height);
 			imshow("Display frame", canvas);
-			waitKey(1);
+			waitKey(1);			
+			mtx.unlock();
+
 		}
 	}
 }
@@ -105,13 +98,16 @@ void resize(const Mat sub_img, Mat &img_crop, int rows, int cols) {
 			img_crop.at<Vec3b>(i, j) = sub_img.at<Vec3b>(i * scale, j * scale);
 		}
 	}
+	return;
 }
 
 
-// examples: make && ./Mosaic main_image pix_c source_lib target_lib
+// examples: make && ./Mosaic main_image pix_c source_lib target_lib 0
 int main(int argc, char* argv[]) {
-	int rows = 64;//pixels in row of subimage
-	int cols = 64;//pixels in column of subimage
+	int py_r, px_c,N_r,N_c;
+	py_r = px_c = atoi(argv[2]);
+	int rows = atoi(argv[2]);//pixels in row of subimage
+	int cols = atoi(argv[2]);//pixels in column of subimage
 
 	// Prepare the image data sets
 	vector<int> compression_params;
@@ -119,8 +115,7 @@ int main(int argc, char* argv[]) {
 	compression_params.push_back(9);
 	string imgsets = argv[3];
 	char* imgcrops = argv[4];
-	string filepath;
-	string filename;
+	string filepath, filename;
 	double scale;
 	Mat image, img_crop;
 	//create resized image pool
@@ -128,7 +123,7 @@ int main(int argc, char* argv[]) {
 	vector<string> img_crop_list;
 	char buf[100];
 	Mat sub_img;
-	bool rescale = true;
+	int rescale = true;
 	for (const auto& entry : fs::directory_iterator(imgsets)) {
 		const auto filenameStr = entry.path().filename().string();
 		filepath = imgsets + filenameStr;
@@ -144,21 +139,19 @@ int main(int argc, char* argv[]) {
 			resize(sub_img, img_crop, rows, cols);
 			imwrite(filename, img_crop, compression_params);
 		}
-		if (count % 100 == 0) {
-			printf("Cropping: %d\n", count);
-		}
+		printf("Counting: %d\n", count);
 		count++;
 	}
 	//Read Original Image
 	string target = argv[1];
 	double blue = 0, green = 0, red = 0;
 	image = imread(target, IMREAD_COLOR);// read image file
-	int py_r, px_c,N_r,N_c;
-	py_r = px_c = atoi(argv[2]);
 	N_r = floor(image.rows / py_r)-1;
 	N_c = floor(image.cols / px_c)-1;
 	canvas = Mat::zeros(N_r * rows, N_c * cols, CV_8UC3);
-	// declaring threads
+
+	// declaring threads	
+
 	pthread_t threads[MAX_THREAD];
 	// prepare argument
 	struct thread_args* args = (struct thread_args*)malloc(sizeof(struct thread_args));
@@ -168,9 +161,8 @@ int main(int argc, char* argv[]) {
 	args->cols = cols;
 	args->img_crop_list = &img_crop_list;
 	args->image = &image;
-	//args->canvas = &canvas;
-	// creating threads, each evaluating its own part
 
+	// creating threads, each evaluating its own part
 	for (int i = 0; i < MAX_THREAD; i++) {
 		pthread_create(&threads[i], NULL, multi, (void*)args);
 	}
@@ -181,6 +173,7 @@ int main(int argc, char* argv[]) {
 
 	// Write Mosaic
 	imwrite("Mosaic.png", canvas, compression_params);
+	printf("Finished!\n");
 	float width_factor = (canvas.cols - canvas.cols % col) / col + 1;
 	float height_factor = (canvas.rows - canvas.rows % row) / row + 1;
 	float factor;
@@ -193,6 +186,7 @@ int main(int argc, char* argv[]) {
 	waitKey(0);
 	return 0;
 }
+
 
 // Functions
 void similarity(Mat imgA, Mat imgB, float& emd) {
@@ -249,7 +243,9 @@ void similarity(Mat imgA, Mat imgB, float& emd) {
 
 	//compare similarity of 2images using emd.
 	emd = cv::EMD(sig1, sig2, DIST_L2); //emd 0 is best matching. 
+	return;
 }
+
 Mat readList(char bgrfile[], vector<string>& path_list) {
 	FILE* ptr = fopen(bgrfile, "r");
 	char buf[100];
@@ -275,6 +271,7 @@ Mat readList(char bgrfile[], vector<string>& path_list) {
 	fclose(ptr);
 	return bgr_list;
 }
+
 void makeTestData(bool yn, char im_dir[],int rows, int cols, int ncolors) {
 	if (yn) {
 		int nb, ng, nr; //number of color in a channel
@@ -300,6 +297,7 @@ void makeTestData(bool yn, char im_dir[],int rows, int cols, int ncolors) {
 			}
 		}
 	}
+	return;
 }
 void makeList(bool yn,string filename,string path) {
 	if (yn) {
@@ -317,6 +315,7 @@ void makeList(bool yn,string filename,string path) {
 		}
 		txtout.close();
 	}
+	return;
 }
 int minDist(Mat bgr_list, double blue, double green, double red, vector<string> path_list) {
 	double mindist = 1e10;
@@ -347,10 +346,12 @@ void meanIntensity(Mat M, double& blue, double& green, double& red) {
 	blue /= N;
 	green /= N;
 	red /= N;
+	return;
 }
 void linspace(double start, double end, int N, double vec[]) {
 	double step = (end - start) / (N - 1);
 	for (int i = 0; i < N; i++) {
 		vec[i] = step * i;
 	}
+	return;
 }

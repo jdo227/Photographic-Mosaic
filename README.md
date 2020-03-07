@@ -9,6 +9,8 @@ This project creates photographic mosaic using images to replace sub-image in th
 ## How to run it?
 ```
 make && ./Mosaic main_image pix_c source_lib target_lib
+make && ./Mosaic main.jpg 50 lib_img_test/ lib_img_crop_test/ 1
+
 ```
 pix_c: number of pixels in a colume of sub-image, e.g. 10.
 source_lib: photo library with images before cropping.
