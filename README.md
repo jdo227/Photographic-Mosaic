@@ -3,7 +3,8 @@ This project creates photographic mosaic using images to replace sub-image in th
 ## Steps
 - Step 1: prepare image library and crop images into smaller size images
 - Step 2: divide the main image into sub-images
-- Step 3: for each sub-image, compare it with images in the library and find the image with best similarity using earth mover's distance (EMD) algorithm implemented in OpenCV
+- Step 3-1: for each sub-image, compare it with images in the library and find the image with best similarity using earth mover's distance (EMD) algorithm implemented in OpenCV
+- Step 3-2: for each sub-image, compare it with images in the library and find the image with best similarity using 3-channel sum square distance method
 - Step 4: replace the sub-image with the best-match in the library
 - Step 5: place the replacements on canvas and create a new image
 ## How to run it?
