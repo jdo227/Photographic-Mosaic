@@ -10,6 +10,8 @@ struct thread_args {
 };
 int step_i = 0;
 int row = 800, col = 1500; //screen resolution
+int size_a = 256; //size of replacement square sub-image
+
 Mat canvas;
 void similarity(Mat imgA, Mat imgB, float& emd);
 
@@ -27,6 +29,18 @@ void pixwise(Mat imgA, Mat imgB, float& emd){
 	}
 	return;
 };
+
+void resize(const Mat sub_img, Mat &img_crop, int rows, int cols) {
+	img_crop = Mat::zeros(rows, cols, CV_8UC3);
+	int scale = sub_img.rows / img_crop.rows;
+	for (int i = 0; i < img_crop.rows; i++) {
+		for (int j = 0; j < img_crop.cols; j++) {
+			img_crop.at<Vec3b>(i, j) = sub_img.at<Vec3b>(i * scale, j * scale);
+		}
+	}
+	return;
+};
+
 void* multi(void* arg) {
 	struct thread_args* args = (struct thread_args*)arg;
 	int count = args->count;
@@ -34,7 +48,6 @@ void* multi(void* arg) {
 	int rows = args->rows;
 	int cols = args->cols;
 	Mat image = *(args->image);
-	//Mat canvas = *(args->canvas);
 	vector<string> img_crop_list = *(args->img_crop_list);
 	int idx = 0, Tp_x, Tp_y;
 	float emd, min_emd;//emd 0 is best matching
@@ -51,29 +64,32 @@ void* multi(void* arg) {
 	int width = canvas.cols / factor;
 	int height = canvas.rows / factor;
 	// each thread computes 1/MAX_THREAD of the matrix
+	Mat img_crops_mp;
 	for (int c = core * N_c*N_r/(MAX_THREAD-1); c < (core + 1) * N_c*N_r/(MAX_THREAD-1); c++) {
 		if (c < N_r * N_c) {
 			int i = (c - c % N_c) / N_c;
 			int j = c % N_c;
 			min_emd = 1<<20;
-			Tp_x = j * cols;
-			Tp_y = i * rows;
+			Tp_x = j * size_a;
+			Tp_y = i * size_a;
 			sub_image = image(Rect(j * px_c, i * py_r, px_c, py_r));
 			for (int k = 0; k < count; k++) {
 				filepath = img_crop_list[k];
 				img_crops = imread(filepath, IMREAD_COLOR);// read image file
+				resize(img_crops, img_crops_mp, rows, cols);
 				//similarity(sub_image, img_crops, emd);
-				pixwise(sub_image, img_crops, emd);
+				pixwise(sub_image, img_crops_mp, emd);
 				if (emd < min_emd) {
 					min_emd = emd;
 					idx = k;
 				}
 			}
-
+			// add cropped image to make new image
 			img_crops = imread(img_crop_list[idx], IMREAD_COLOR);
 			mtx.lock();
-			aux = canvas.colRange(Tp_x, Tp_x + cols).rowRange(Tp_y, Tp_y + rows);
+			aux = canvas.colRange(Tp_x, Tp_x + size_a).rowRange(Tp_y, Tp_y + size_a);
 			img_crops.copyTo(aux);
+			// update new image
 			namedWindow("Display frame", WINDOW_NORMAL);
 			resizeWindow("Display frame", width, height);
 			imshow("Display frame", canvas);
@@ -90,16 +106,7 @@ int minDist(Mat bgr_list, double blue, double green, double red, vector<string> 
 void makeList(bool yn, string filename, string path);
 void makeTestData(bool yn, char im_dir[], int rows, int cols, int ncolors);
 Mat readList(char bgrfile[], vector<string>& path_list);
-void resize(const Mat sub_img, Mat &img_crop, int rows, int cols) {
-	img_crop = Mat::zeros(rows, cols, CV_8UC3);
-	int scale = sub_img.rows / img_crop.rows;
-	for (int i = 0; i < img_crop.rows; i++) {
-		for (int j = 0; j < img_crop.cols; j++) {
-			img_crop.at<Vec3b>(i, j) = sub_img.at<Vec3b>(i * scale, j * scale);
-		}
-	}
-	return;
-}
+
 
 
 // examples: make && ./Mosaic main_image pix_c source_lib target_lib 0
@@ -107,7 +114,7 @@ int main(int argc, char* argv[]) {
 	int py_r, px_c,N_r,N_c;
 	py_r = px_c = atoi(argv[2]);
 	int rows = atoi(argv[2]);//pixels in row of subimage
-	int cols = atoi(argv[2]);//pixels in column of subimage
+	int cols = rows;//pixels in column of subimage
 
 	// Prepare the image data sets
 	vector<int> compression_params;
@@ -134,9 +141,9 @@ int main(int argc, char* argv[]) {
 		filename = imgcrops + filenameStr;
 		img_crop_list.push_back(filename);
 		if (rescale) {
-			scale = min(floor(image.rows / rows), floor(image.cols / cols));
-			sub_img = image.colRange(0, scale * cols).rowRange(0, scale * rows);
-			resize(sub_img, img_crop, rows, cols);
+			scale = min(floor(image.rows / size_a), floor(image.cols / size_a));
+			sub_img = image.colRange(0, scale * size_a).rowRange(0, scale * size_a);
+			resize(sub_img, img_crop, size_a, size_a);
 			imwrite(filename, img_crop, compression_params);
 		}
 		printf("Counting: %d\n", count);
@@ -148,10 +155,10 @@ int main(int argc, char* argv[]) {
 	image = imread(target, IMREAD_COLOR);// read image file
 	N_r = floor(image.rows / py_r)-1;
 	N_c = floor(image.cols / px_c)-1;
-	canvas = Mat::zeros(N_r * rows, N_c * cols, CV_8UC3);
+	// Create a blank New Image
+	canvas = Mat::zeros(N_r * size_a, N_c * size_a, CV_8UC3);
 
 	// declaring threads	
-
 	pthread_t threads[MAX_THREAD];
 	// prepare argument
 	struct thread_args* args = (struct thread_args*)malloc(sizeof(struct thread_args));
