@@ -16,7 +16,6 @@ add_executable(Mosaic main.cpp)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -pthread")
 # PTHREAD
 SET(THREADS_PREFER_PTHREAD_FLAG ON)
 #Add lib for fs
