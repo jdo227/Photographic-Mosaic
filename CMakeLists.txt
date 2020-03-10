@@ -27,6 +27,6 @@ set_property(TARGET Mosaic PROPERTY CXX_STANDARD_REQUIRED ON)
 
 # link opencv library
 include_directories(${X11_INCLUDE_DIR})
-target_link_libraries( Mosaic ${OpenCV_LIBS} )
+target_link_libraries(Mosaic ${OpenCV_LIBS} )
 target_link_libraries(Mosaic Threads::Threads)
 target_link_libraries(Mosaic X11)
